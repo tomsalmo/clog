@@ -1,9 +1,11 @@
 package clog
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,11 +45,14 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 						"duration", time.Since(start),
 						"err", panicErr,
 					)
+
+					panic(panicErr) // re-panic. We only want to log the error
 				}
-				panic(panicErr) // re-panic. We only want to log the error
 			}()
 
 			wCapture := &captureResponseWriter{ResponseWriter: w}
+			ctxCapture := &contextValue{}
+			r = r.WithContext(context.WithValue(r.Context(), contextKey{}, ctxCapture))
 
 			next.ServeHTTP(wCapture, r)
 
@@ -68,30 +73,71 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 				reqCookies[i] = cookie.Name
 			}
 
-			args := []any{
-				"method", r.Method,
-				"path", r.URL.Path,
-				"remote_addr", r.RemoteAddr,
-				"status", status,
-				"duration", time.Since(start),
+			args := []slog.Attr{
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.String("remote_addr", r.RemoteAddr),
+				slog.Int("status", status),
 			}
 
 			if opts.logCookieNames {
 				if len(reqCookies) > 0 {
-					args = append(args, "cookies", strings.Join(reqCookies, ","))
+					args = append(args, slog.String("cookies", strings.Join(reqCookies, ",")))
 				}
 				if len(setCookies) > 0 {
-					args = append(args, "set_cookies", strings.Join(setCookies, ","))
+					args = append(args, slog.String("set_cookies", strings.Join(setCookies, ",")))
 				}
 			}
 
+			// Add the attrs from the downstream handlers
+			ctxCapture.mx.Lock()
+			defer ctxCapture.mx.Unlock()
+			for _, a := range ctxCapture.attrs {
+				args = append(args, a)
+			}
+
+			// Add the duration last
+			args = append(args, slog.Duration("duration", time.Since(start)))
+
 			if status >= 400 {
-				opts.logger.ErrorContext(r.Context(), "http request error", args...)
+				opts.logger.LogAttrs(r.Context(), slog.LevelError, "http request error", args...)
 				return
 			}
 
-			opts.logger.InfoContext(r.Context(), "http request processed", args...)
+			opts.logger.LogAttrs(r.Context(), slog.LevelInfo, "http request processed", args...)
 		})
+	}
+}
+
+// Add adds slog Attrs to the canonical log line.
+//
+// The context passed must be downstream of clog.Middleware(). If not, it will noop.
+func Add(ctx context.Context, args ...any) {
+	v, ok := ctx.Value(contextKey{}).(*contextValue)
+	if !ok {
+		// Silently bypass if value is not in context
+		return
+	}
+
+	v.add(args...)
+}
+
+type (
+	contextKey   struct{}
+	contextValue struct {
+		mx    sync.Mutex
+		attrs []slog.Attr
+	}
+)
+
+func (v *contextValue) add(args ...any) {
+	v.mx.Lock()
+	defer v.mx.Unlock()
+
+	var a slog.Attr
+	for len(args) > 0 {
+		a, args = argsToAttr(args)
+		v.attrs = append(v.attrs, a)
 	}
 }
 
