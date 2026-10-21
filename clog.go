@@ -1,4 +1,4 @@
-package middleware
+package clog
 
 import (
 	"log/slog"
@@ -8,63 +8,75 @@ import (
 )
 
 // RecoverLogger is a logging middleware that also recovers from panics.
-func RecoverLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			panicErr := recover()
-			if panicErr != nil {
-				slog.Error("http request recovered from panic",
-					"method", r.Method,
-					"path", r.URL.Path,
-					"remote_addr", r.RemoteAddr,
-					"err", panicErr)
+func RecoverLogger(optFns ...Option) func(http.Handler) http.Handler {
+	opts := &options{
+		logger: slog.Default(),
+	}
+
+	for _, fn := range optFns {
+		fn(opts)
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				panicErr := recover()
+				if panicErr != nil {
+					opts.logger.Error("http request recovered from panic",
+						"method", r.Method,
+						"path", r.URL.Path,
+						"remote_addr", r.RemoteAddr,
+						"err", panicErr)
+				}
+			}()
+
+			start := time.Now()
+			wCapture := &captureResponseWriter{ResponseWriter: w}
+
+			next.ServeHTTP(wCapture, r)
+
+			status := 200
+			if wCapture.status != nil {
+				status = *wCapture.status
 			}
-		}()
 
-		start := time.Now()
-		wCapture := &captureResponseWriter{ResponseWriter: w}
+			setCookies := wCapture.Header().Values("set-cookie")
+			for idx, cookie := range setCookies {
+				n, _, _ := strings.Cut(cookie, "=")
+				setCookies[idx] = n
+			}
 
-		next.ServeHTTP(wCapture, r)
+			cookies := r.Cookies()
+			reqCookies := make([]string, len(cookies))
+			for i, cookie := range cookies {
+				reqCookies[i] = cookie.Name
+			}
 
-		status := 200
-		if wCapture.status != nil {
-			status = *wCapture.status
-		}
+			args := []any{
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"status", status,
+				"duration", time.Since(start),
+			}
 
-		setCookies := wCapture.Header().Values("set-cookie")
-		for idx, cookie := range setCookies {
-			n, _, _ := strings.Cut(cookie, "=")
-			setCookies[idx] = n
-		}
+			if opts.logCookieNames {
+				if len(reqCookies) > 0 {
+					args = append(args, "cookies", strings.Join(reqCookies, ","))
+				}
+				if len(setCookies) > 0 {
+					args = append(args, "set_cookies", strings.Join(setCookies, ","))
+				}
+			}
 
-		cookies := r.Cookies()
-		reqCookies := make([]string, len(cookies))
-		for i, cookie := range cookies {
-			reqCookies[i] = cookie.Name
-		}
+			if status >= 400 {
+				opts.logger.Error("http request error", args...)
+				return
+			}
 
-		args := []any{
-			"method", r.Method,
-			"path", r.URL.Path,
-			"remote_addr", r.RemoteAddr,
-			"status", status,
-			"duration", time.Since(start),
-		}
-		if len(reqCookies) > 0 {
-			args = append(args, "cookies", strings.Join(reqCookies, ","))
-		}
-
-		if len(setCookies) > 0 {
-			args = append(args, "set_cookies", strings.Join(setCookies, ","))
-		}
-
-		if status >= 400 {
-			slog.Error("http request error", args...)
-			return
-		}
-
-		slog.Info("http request processed", args...)
-	})
+			opts.logger.Info("http request processed", args...)
+		})
+	}
 }
 
 type captureResponseWriter struct {
