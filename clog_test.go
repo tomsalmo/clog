@@ -1,7 +1,9 @@
 package clog_test
 
 import (
+	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +14,7 @@ import (
 )
 
 func TestPanic(t *testing.T) {
-	const handlerErr = "panic handler"
+	var handlerErr = fmt.Sprintf("panic handler %d", rand.Int64())
 
 	panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic(handlerErr)
