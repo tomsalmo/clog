@@ -1,0 +1,13 @@
+## Ignore binaries:
+# Ignore all
+*
+# Unignore all with extensions
+!*.*
+# Unignore all dirs
+!*/
+# Unignore makefile
+!Makefile
+
+.env
+.DS_Store
+tmp/
