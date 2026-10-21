@@ -22,7 +22,7 @@ func RecoverLogger(optFns ...Option) func(http.Handler) http.Handler {
 			defer func() {
 				panicErr := recover()
 				if panicErr != nil {
-					opts.logger.Error("http request recovered from panic",
+					opts.logger.ErrorContext(r.Context(), "http request recovered from panic",
 						"method", r.Method,
 						"path", r.URL.Path,
 						"remote_addr", r.RemoteAddr,
@@ -70,11 +70,11 @@ func RecoverLogger(optFns ...Option) func(http.Handler) http.Handler {
 			}
 
 			if status >= 400 {
-				opts.logger.Error("http request error", args...)
+				opts.logger.ErrorContext(r.Context(), "http request error", args...)
 				return
 			}
 
-			opts.logger.Info("http request processed", args...)
+			opts.logger.InfoContext(r.Context(), "http request processed", args...)
 		})
 	}
 }
