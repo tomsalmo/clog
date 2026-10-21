@@ -31,6 +31,8 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
 			defer func() {
 				panicErr := recover()
 				if panicErr != nil {
@@ -38,13 +40,13 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 						"method", r.Method,
 						"path", r.URL.Path,
 						"remote_addr", r.RemoteAddr,
+						"duration", time.Since(start),
 						"err", panicErr,
 					)
 				}
 				panic(panicErr) // re-panic. We only want to log the error
 			}()
 
-			start := time.Now()
 			wCapture := &captureResponseWriter{ResponseWriter: w}
 
 			next.ServeHTTP(wCapture, r)

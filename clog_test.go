@@ -60,9 +60,14 @@ func TestPanic(t *testing.T) {
 
 	// Test the expected attrs
 	gotAttrs := make(map[string]any, got.NumAttrs())
+	var gotRemoteAddr, gotDuration string
 	got.Attrs(func(a slog.Attr) bool {
-		// Exclude remote_addr, I don't know how to test it
 		if a.Key == "remote_addr" {
+			gotRemoteAddr = a.Value.String()
+			return true
+		}
+		if a.Key == "duration" {
+			gotDuration = a.Value.String()
 			return true
 		}
 
@@ -76,5 +81,11 @@ func TestPanic(t *testing.T) {
 	}
 	if diff := cmp.Diff(wantAttrs, gotAttrs); diff != "" {
 		t.Errorf("log attrs does not match expectation (-want,+got)\n%s", diff)
+	}
+	if gotRemoteAddr == "" {
+		t.Errorf("%q = %q, want value", "remote_addr", gotRemoteAddr)
+	}
+	if gotDuration == "" {
+		t.Errorf("%q = %q, want value", "duration", gotDuration)
 	}
 }
