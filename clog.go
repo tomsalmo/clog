@@ -7,8 +7,20 @@ import (
 	"time"
 )
 
-// RecoverLogger is a logging middleware that also recovers from panics.
-func RecoverLogger(optFns ...Option) func(http.Handler) http.Handler {
+// Middleware is a canonical logging middleware.
+//
+// It adds a line with the method, path, duration, and remote address.
+//
+//	LogCookieNames()
+//
+// Adds the names of cookies received or set by the server to the log line.
+//
+//	WithLogger(*slog.Logger)
+//
+// Allows you to pass in a slog instance. Without this the middleware uses slog.Default.
+//
+// Panics are recovered, logged, and then re-paniced. You should recover in an upstream middleware.
+func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 	opts := &options{
 		logger: slog.Default(),
 	}
@@ -26,8 +38,10 @@ func RecoverLogger(optFns ...Option) func(http.Handler) http.Handler {
 						"method", r.Method,
 						"path", r.URL.Path,
 						"remote_addr", r.RemoteAddr,
-						"err", panicErr)
+						"err", panicErr,
+					)
 				}
+				panic(panicErr) // re-panic. We only want to log the error
 			}()
 
 			start := time.Now()
