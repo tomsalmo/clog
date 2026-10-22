@@ -582,11 +582,9 @@ func TestAddConcurrent(t *testing.T) {
 	concurrentHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var wg sync.WaitGroup
 		for i := range workers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				clog.Add(r.Context(), "worker", i)
-			}()
+			})
 		}
 		wg.Wait()
 
