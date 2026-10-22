@@ -223,6 +223,166 @@ func TestMiddlewareErrorStatus(t *testing.T) {
 	}
 }
 
+func TestMiddlewareLogCookieNames(t *testing.T) {
+	cookieHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "s3cr3t", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "csrf", Value: "t0k3n", Path: "/", HttpOnly: true, Secure: true})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cap := &captureHandler{}
+	l := slog.New(cap)
+
+	h := clog.Middleware(clog.WithLogger(l), clog.LogCookieNames)(cookieHandler)
+
+	s := httptest.NewTestServer(t, h)
+	s.Start()
+	defer s.Close()
+
+	req, err := http.NewRequest(http.MethodGet, s.URL, nil)
+	if err != nil {
+		t.Fatalf("error creating GET request against httptest server: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: "session", Value: "s3cr3t"})
+	req.AddCookie(&http.Cookie{Name: "tracker", Value: "xyzzy"})
+
+	resp, err := s.Client().Do(req)
+	if err != nil {
+		t.Fatalf("error performing GET against httptest server: %v", err)
+	}
+	resp.Body.Close()
+
+	cap.mx.Lock()
+	defer cap.mx.Unlock()
+
+	if len(cap.records) != 1 {
+		t.Fatalf("captured log records len = %d, want 1", len(cap.records))
+	}
+
+	gotAttrs := recordAttrs(cap.records[0])
+	wantKeys := []string{"method", "path", "remote_addr", "status", "cookies", "set_cookies", "duration"}
+	if diff := cmp.Diff(wantKeys, attrKeys(gotAttrs)); diff != "" {
+		t.Errorf("attr keys does not match expectation (-want,+got)\n%s", diff)
+	}
+
+	gotVals := attrVals(gotAttrs)
+	if gotVals["remote_addr"] == "" {
+		t.Errorf("%q = %q, want value", "remote_addr", gotVals["remote_addr"])
+	}
+	delete(gotVals, "remote_addr")
+	delete(gotVals, "duration")
+
+	wantVals := map[string]any{
+		"method":      "GET",
+		"path":        "/",
+		"status":      int64(http.StatusOK),
+		"cookies":     "session,tracker",
+		"set_cookies": "session,csrf",
+	}
+	if diff := cmp.Diff(wantVals, gotVals); diff != "" {
+		t.Errorf("log attrs does not match expectation (-want,+got)\n%s", diff)
+	}
+}
+
+func TestMiddlewareLogCookieNamesNoCookies(t *testing.T) {
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	cap := &captureHandler{}
+	l := slog.New(cap)
+
+	h := clog.Middleware(clog.WithLogger(l), clog.LogCookieNames)(okHandler)
+
+	s := httptest.NewTestServer(t, h)
+	s.Start()
+	defer s.Close()
+
+	_, err := s.Client().Get(s.URL)
+	if err != nil {
+		t.Fatalf("error performing GET against httptest server: %v", err)
+	}
+
+	cap.mx.Lock()
+	defer cap.mx.Unlock()
+
+	if len(cap.records) != 1 {
+		t.Fatalf("captured log records len = %d, want 1", len(cap.records))
+	}
+
+	gotAttrs := recordAttrs(cap.records[0])
+	wantKeys := []string{"method", "path", "remote_addr", "status", "duration"}
+	if diff := cmp.Diff(wantKeys, attrKeys(gotAttrs)); diff != "" {
+		t.Errorf("attr keys does not match expectation (-want,+got)\n%s", diff)
+	}
+}
+
+// TestSetCookieHeaderIntact guards against the middleware corrupting the
+// Set-Cookie response headers when it extracts cookie names for logging.
+// The header values left on the ResponseWriter, and the headers the client
+// receives, must be the full cookie strings set by the handler.
+func TestSetCookieHeaderIntact(t *testing.T) {
+	want := []string{
+		"session=s3cr3t; Path=/",
+		"csrf=t0k3n; Path=/; HttpOnly; Secure",
+	}
+
+	tests := []struct {
+		name string
+		opts []clog.Option
+	}{
+		{name: "cookie logging enabled", opts: []clog.Option{clog.LogCookieNames}},
+		{name: "cookie logging disabled", opts: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cookieHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.SetCookie(w, &http.Cookie{Name: "session", Value: "s3cr3t", Path: "/"})
+				http.SetCookie(w, &http.Cookie{Name: "csrf", Value: "t0k3n", Path: "/", HttpOnly: true, Secure: true})
+				w.WriteHeader(http.StatusOK)
+			})
+
+			cap := &captureHandler{}
+			l := slog.New(cap)
+
+			var headerAfterServer []string
+			var mx sync.Mutex
+			captureHeaders := func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					next.ServeHTTP(w, r)
+					mx.Lock()
+					defer mx.Unlock()
+					headerAfterServer = w.Header().Values("Set-Cookie")
+				})
+			}
+
+			opts := append([]clog.Option{clog.WithLogger(l)}, tc.opts...)
+			h := captureHeaders(clog.Middleware(opts...)(cookieHandler))
+
+			s := httptest.NewTestServer(t, h)
+			s.Start()
+			defer s.Close()
+
+			resp, err := s.Client().Get(s.URL)
+			if err != nil {
+				t.Fatalf("error performing GET against httptest server: %v", err)
+			}
+			resp.Body.Close()
+
+			mx.Lock()
+			defer mx.Unlock()
+			if diff := cmp.Diff(want, headerAfterServer); diff != "" {
+				t.Errorf("header map set-cookie values does not match expectation (-want,+got)\n%s", diff)
+			}
+
+			if diff := cmp.Diff(want, resp.Header.Values("Set-Cookie")); diff != "" {
+				t.Errorf("client-visible set-cookie headers does not match expectation (-want,+got)\n%s", diff)
+			}
+		})
+	}
+}
+
 type attrKV struct {
 	Key string
 	Val any

@@ -61,18 +61,6 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 				status = *wCapture.status
 			}
 
-			setCookies := wCapture.Header().Values("set-cookie")
-			for idx, cookie := range setCookies {
-				n, _, _ := strings.Cut(cookie, "=")
-				setCookies[idx] = n
-			}
-
-			cookies := r.Cookies()
-			reqCookies := make([]string, len(cookies))
-			for i, cookie := range cookies {
-				reqCookies[i] = cookie.Name
-			}
-
 			args := []slog.Attr{
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
@@ -81,6 +69,19 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 			}
 
 			if opts.logCookieNames {
+				capturedSetCookies := wCapture.Header().Values("set-cookie")
+				setCookies := make([]string, len(capturedSetCookies))
+				for idx, cookie := range capturedSetCookies {
+					n, _, _ := strings.Cut(cookie, "=")
+					setCookies[idx] = n
+				}
+
+				capturedCookies := r.Cookies()
+				reqCookies := make([]string, len(capturedCookies))
+				for i, cookie := range capturedCookies {
+					reqCookies[i] = cookie.Name
+				}
+
 				if len(reqCookies) > 0 {
 					args = append(args, slog.String("cookies", strings.Join(reqCookies, ",")))
 				}
