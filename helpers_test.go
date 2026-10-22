@@ -44,7 +44,7 @@ func recoverer(t *testing.T, wantPanic bool) func(next http.Handler) http.Handle
 				if wantPanic && err == nil {
 					t.Errorf("handler didn't panic, want panic")
 				}
-				if !wantPanic && err == nil {
+				if wantPanic && err == nil {
 					t.Errorf("handler panic = %q, want no panic", err)
 				}
 			}()
