@@ -12,11 +12,12 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/tomsalmo/clog"
 )
 
 func TestPanic(t *testing.T) {
-	var handlerErr = fmt.Sprintf("panic handler %d", rand.Int64())
+	handlerErr := fmt.Sprintf("panic handler %d", rand.Int64())
 
 	panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic(handlerErr)
@@ -182,7 +183,9 @@ func TestMiddlewareErrorStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error performing GET / against httptest server: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Logf("error closing response body: %v", err)
+	}
 
 	cap.mx.Lock()
 	defer cap.mx.Unlock()
@@ -226,7 +229,10 @@ func TestMiddlewareErrorStatus(t *testing.T) {
 func TestMiddlewareLogCookieNames(t *testing.T) {
 	cookieHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "session", Value: "s3cr3t", Path: "/"})
-		http.SetCookie(w, &http.Cookie{Name: "csrf", Value: "t0k3n", Path: "/", HttpOnly: true, Secure: true})
+		http.SetCookie(
+			w,
+			&http.Cookie{Name: "csrf", Value: "t0k3n", Path: "/", HttpOnly: true, Secure: true},
+		)
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -250,7 +256,9 @@ func TestMiddlewareLogCookieNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error performing GET against httptest server: %v", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Logf("error closing response body: %v", err)
+	}
 
 	cap.mx.Lock()
 	defer cap.mx.Unlock()
@@ -260,7 +268,15 @@ func TestMiddlewareLogCookieNames(t *testing.T) {
 	}
 
 	gotAttrs := recordAttrs(cap.records[0])
-	wantKeys := []string{"method", "path", "remote_addr", "status", "cookies", "set_cookies", "duration"}
+	wantKeys := []string{
+		"method",
+		"path",
+		"remote_addr",
+		"status",
+		"cookies",
+		"set_cookies",
+		"duration",
+	}
 	if diff := cmp.Diff(wantKeys, attrKeys(gotAttrs)); diff != "" {
 		t.Errorf("attr keys does not match expectation (-want,+got)\n%s", diff)
 	}
@@ -339,7 +355,16 @@ func TestSetCookieHeaderIntact(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cookieHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				http.SetCookie(w, &http.Cookie{Name: "session", Value: "s3cr3t", Path: "/"})
-				http.SetCookie(w, &http.Cookie{Name: "csrf", Value: "t0k3n", Path: "/", HttpOnly: true, Secure: true})
+				http.SetCookie(
+					w,
+					&http.Cookie{
+						Name:     "csrf",
+						Value:    "t0k3n",
+						Path:     "/",
+						HttpOnly: true,
+						Secure:   true,
+					},
+				)
 				w.WriteHeader(http.StatusOK)
 			})
 
@@ -368,16 +393,24 @@ func TestSetCookieHeaderIntact(t *testing.T) {
 			if err != nil {
 				t.Fatalf("error performing GET against httptest server: %v", err)
 			}
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				t.Logf("error closing response body: %v", err)
+			}
 
 			mx.Lock()
 			defer mx.Unlock()
 			if diff := cmp.Diff(want, headerAfterServer); diff != "" {
-				t.Errorf("header map set-cookie values does not match expectation (-want,+got)\n%s", diff)
+				t.Errorf(
+					"header map set-cookie values does not match expectation (-want,+got)\n%s",
+					diff,
+				)
 			}
 
 			if diff := cmp.Diff(want, resp.Header.Values("Set-Cookie")); diff != "" {
-				t.Errorf("client-visible set-cookie headers does not match expectation (-want,+got)\n%s", diff)
+				t.Errorf(
+					"client-visible set-cookie headers does not match expectation (-want,+got)\n%s",
+					diff,
+				)
 			}
 		})
 	}
@@ -479,7 +512,9 @@ func TestAdd(t *testing.T) {
 
 			gotAttrs := recordAttrs(cap.records[0])
 
-			wantKeys := append([]string{"method", "path", "remote_addr", "status"}, attrKeys(tc.want)...)
+			wantKeys := append(
+				[]string{"method", "path", "remote_addr", "status"},
+				attrKeys(tc.want)...)
 			wantKeys = append(wantKeys, "duration")
 			if diff := cmp.Diff(wantKeys, attrKeys(gotAttrs)); diff != "" {
 				t.Errorf("attr keys does not match expectation (-want,+got)\n%s", diff)
