@@ -93,9 +93,7 @@ func Middleware(optFns ...Option) func(http.Handler) http.Handler {
 			// Add the attrs from the downstream handlers
 			ctxCapture.mx.Lock()
 			defer ctxCapture.mx.Unlock()
-			for _, a := range ctxCapture.attrs {
-				args = append(args, a)
-			}
+			args = append(args, ctxCapture.attrs...)
 
 			// Add the duration last
 			args = append(args, slog.Duration("duration", time.Since(start)))
