@@ -26,8 +26,6 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v8
-        with:
-          args: run
       - run: golangci-lint fmt
       - run: go fix ./...
       - run: go mod tidy
